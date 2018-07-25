@@ -15,7 +15,7 @@ def check_password(plain_text_password, hashed_password):
 
 from pymongo import MongoClient
 client = MongoClient()
-db = client.test
+db = client.nishe
 
 from bson.objectid import ObjectId
 
@@ -41,7 +41,7 @@ def digits_farsify(digits: str):
 @app.route('/v1/users', methods=['POST'])
 def register_user():
     if not request.is_json:
-        return jsonify({'status': 400, 'message': 'IT_IS_NOT_JSON'})
+        return jsonify({'status': 400, 'message': 'it_is_not_JSON'})
     j = request.get_json()
     schema = {
         'mobile': {'type': 'string', 'maxlength': 30},
@@ -53,9 +53,9 @@ def register_user():
         return jsonify({'status': 400, 'message': V.errors})
     # mobile format: +989123456789
     if j['mobile'][0] != '+':
-        return jsonify({'status': 400, 'message': 'MALFORMED_MOBILE'})
+        return jsonify({'status': 400, 'message': 'malformed_mobile'})
     if db.users.find_one({'mobile': j['mobile']}, projection={'mobile': 1}) != None:
-        return jsonify({'status': 444, 'message': 'ALREADY_REGISTERED'})
+        return jsonify({'status': 444, 'message': 'mobile_already_registered'})
     code = ''.join(SystemRandom().choice(
             string.digits) for digit in range(5))
     try:
@@ -68,13 +68,13 @@ def register_user():
         print(response)
     except APIException as e:
         print(e)
-        return jsonify({'status': 500, 'message': 'SMS_FAILED'})
+        return jsonify({'status': 500, 'message': 'sms_failed'})
     except HTTPException as e:
         print(e)
-        return jsonify({'status': 500, 'debug': 'SMS_FAILED'})
+        return jsonify({'status': 500, 'message': 'sms_failed'})
     except Exception as e:
         print(e)
-        return jsonify({'status': 500, 'debug': 'SMS_FAILED'})
+        return jsonify({'status': 500, 'message': 'sms_failed'})
     else:
         r_register.hmset(j['mobile'],
             {
@@ -89,7 +89,7 @@ def register_user():
 @app.route('/v1/activate', methods=['POST'])
 def activate_user():
     if not request.is_json:
-        return jsonify({'status': 400, 'message': 'IT_IS_NOT_JSON'})
+        return jsonify({'status': 400, 'message': 'it_is_not_JSON'})
     j = request.get_json()
     schema = {
         'mobile': {'type': 'string', 'maxlength': 30},    
@@ -99,20 +99,21 @@ def activate_user():
     if not V.validate(j):
         return jsonify({'status': 400, 'message': V.errors})
     user_registration_info = r_register.hgetall(j['mobile'])
-    if j['code'] != user_registration_info['code']:
-        return jsonify({'status': 403, 'message': 'INVALID_CODE'})
+    if j['code'] != user_registration_info[b'code'].decode('utf8'):
+        return jsonify({'status': 403, 'message': 'incorrect_code'})
     r_register.delete(j['mobile'])
     token = ''.join(SystemRandom().choice(
         string.ascii_uppercase + string.digits) for alphnm in range(32))
     db.users.insert_one(
         {
             'mobile': j['mobile'],
-            'name': user_registration_info['name'],
-            'password': user_registration_info['password'],
+            'name': user_registration_info[b'name'].decode('utf8'),
+            'password': user_registration_info[b'password'].decode('utf8'),
             'token': token,
             'remaining_likes': 100,
             'remaining_posts': 100,
-            'earned_likes': 0
+            'earned_likes': 0,
+            'is_reviewer': False
         }
     )
     return jsonify({'status': 201, 'token': token})
@@ -121,10 +122,10 @@ def activate_user():
 @app.route('/v1/login', methods=['POST'])
 def login_user():
     if not request.is_json:
-        return jsonify({'status': 400, 'message': 'IT_IS_NOT_JSON'})
+        return jsonify({'status': 400, 'message': 'it_is_not_JSON'})
     j = request.get_json()
     schema = {
-        'mobile': {'type': 'string', 'maxlength': 30},    
+        'mobile': {'type': 'string', 'maxlength': 30},
         'password': {'type': 'string'}
     }
     V = Validator(schema)
@@ -142,6 +143,181 @@ def login_user():
         return jsonify({'status': 403})
 
 
+@app.route('/v1/posts', methods=['POST'])
+def add_post():
+    if not request.is_json:
+        return jsonify({'status': 400, 'message': 'it_is_not_JSON'})
+    j = request.get_json()
+    schema = {
+        'text': {'type': 'string', 'maxlength': 200}
+    }
+    V = Validator(schema)
+    if not V.validate(j):
+        return jsonify({'status': 400, 'message': V.errors})
+    try:
+        token = request.headers['Authorization']
+    except KeyError:
+        return jsonify({'status': 403})
+    user = db.users.find_one(
+        {
+            'token': token
+        },
+        projection = {
+            'remaining_posts': 1,
+            'name': 1
+        }
+    )
+    if user['remaining_posts'] <= 1:
+        return jsonify({'status': 429, 'message': 'POST_DAILY_LIMIT_EXCEEDED'})
+    db.posts.insert_one(
+        {
+            'text': j['text'],
+            'is_reviewed': False,
+            'is_rejected': False,
+            'is_disabled': False,
+            'user': {
+                '_id': user['_id'],
+                'name': user['name']
+            },
+            'date': datetime.datetime.utcnow().replace(microsecond=0, second=0, minute=0, hour=0),
+            'datetime': datetime.datetime.utcnow(),
+            'likes': 0
+        }
+    )
+    db.users.update_one(
+        {'_id': ObjectId(user['_id'])},
+        {'$inc': {'remaining_posts': -1}}
+    )
+    return jsonify({'status': 201, 'remaining_posts': user['remaining_posts'] - 1})
+
+
+@app.route('/v1/unreviewed_posts')
+def show_unreviewed_posts():
+    try:
+        token = request.headers['Authorization']
+    except KeyError:
+        return jsonify({'status': 403})
+    user = db.users.find_one(
+        {
+            'token': token,
+            'is_reviewer': True
+        },
+        projection={'_id': 1}
+    )
+    if user == None:
+        return jsonify({'status': 403})
+    posts = db.posts.find(
+        {
+            'is_reviewed': False,
+            'date': datetime.datetime.utcnow().replace(microsecond=0, second=0, minute=0, hour=0)
+        },
+        projection={
+            'text': 1, 'user.name': 1
+        },
+        limit=request.args.get('limit', default=10, type=int),
+        skip=request.args.get('offset', default=0, type=int)
+    )
+    return jsonify({'status': 200, 'posts': list(posts)})
+
+
+@app.route('/v1/review_post', methods=['PATCH'])
+def review_post():
+    if not request.is_json:
+        return jsonify({'status': 400, 'message': 'it_is_not_JSON'})
+    j = request.get_json()
+    schema = {
+        '_id': {'type': 'string', 'maxlength': 24},
+        'action': {'type': 'string', 'regex': '^(accept|reject)$'}
+    }
+    V = Validator(schema)
+    if not V.validate(j):
+        return jsonify({'status': 400, 'message': V.errors})
+    try:
+        token = request.headers['Authorization']
+    except KeyError:
+        return jsonify({'status': 403})
+    user = db.users.find_one(
+        {
+            'token': token,
+            'is_reviewer': True
+        },
+        projection={'_id': 1}
+    )
+    if user == None:
+        return jsonify({'status': 403})
+    if j['action'] == 'accept':
+        update = {
+            '$set': {
+                'is_reviewed': True,
+                'reviewer_id': user['_id']
+            }
+        }
+    else: # if j['action'] == 'reject'
+        update = {
+            '$set': {
+                'is_reviewed': True,
+                'reviewer_id': user['_id']
+            }
+        }
+    result = db.posts.update_one(
+        {
+            '_id': ObjectId(j['_id']),
+            'is_reviewed': False
+        },
+        update
+    )
+    if result.matched_count == 0:
+        return jsonify({'status': 404})
+    elif result.modified_count == 1:
+        return jsonify({'status': 200})
+    else:
+        return jsonify({'status': 500})
+
+
+@app.route('/v1/reviewed_posts', methods=['POST'])
+def show_reviewed_posts():
+    if not request.is_json:
+        return jsonify({'status': 400, 'message': 'it_is_not_JSON'})
+    j = request.get_json()
+    schema = {
+        'search': {'type': 'string', 'maxlength': 200}
+    }
+    V = Validator(schema)
+    if not V.validate(j):
+        return jsonify({'status': 400, 'message': V.errors})
+    if j['search'] == '':
+        posts = db.posts.find(
+            {
+                'is_reviewed': True,
+                'is_rejected': False,
+                'is_disabled': False,
+                'date': datetime.datetime.utcnow().replace(microsecond=0, second=0, minute=0, hour=0)
+            },
+            projection={
+                'text': 1, 'user.name': 1, 'likes': 1
+            },
+            limit=request.args.get('limit', default=10, type=int),
+            skip=request.args.get('offset', default=0, type=int)
+        )
+    else:
+        posts = db.posts.find(
+            {
+                'is_reviewed': True,
+                'is_rejected': False,
+                'is_disabled': False,
+                'date': datetime.datetime.utcnow().replace(microsecond=0, second=0, minute=0, hour=0),
+                '$text': {'$search': j['search']}
+            },
+            projection={
+                'text': 1, 'user.name': 1, 'likes': 1, 'score': {'$meta': 'textScore'}
+            },
+            limit=request.args.get('limit', default=10, type=int),
+            skip=request.args.get('offset', default=0, type=int),
+            sort=[('score', {'$meta': 'textScore'})]
+        )
+    return jsonify({'status': 200, 'posts': list(posts)})
+
+
 @app.route('/v1/main_post')
 def show_main_post():
     post = db.posts.find_one(
@@ -152,12 +328,12 @@ def show_main_post():
             'is_disabled': False
         },
         projection={'user': 1, 'text': 1},
-        sort=[('likes', -1)]
+        sort=[('likes', -1)],
+        limit=1
     )
     if post == None:
         return jsonify({'status': 404})
     return jsonify({'status': 200, 'post': post})
-
 
 
 @app.route('/')
