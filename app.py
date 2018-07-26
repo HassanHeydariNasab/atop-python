@@ -17,6 +17,8 @@ from pymongo import MongoClient
 client = MongoClient()
 db = client.nishe
 
+from pymongo.collection import ReturnDocument
+
 from bson.objectid import ObjectId
 
 from flask import Flask, request, jsonify
@@ -186,7 +188,7 @@ def add_post():
             'name': 1
         }
     )
-    if user['remaining_posts'] <= 1:
+    if user['remaining_posts'] < 1:
         return jsonify({'status': 429, 'message': 'POST_DAILY_LIMIT_EXCEEDED'})
     db.posts.insert_one(
         {
@@ -380,7 +382,6 @@ def show_reviewed_posts():
     return jsonify({'status': 200, 'posts': posts})
 
 
-
 @app.route('/v1/main_post')
 def show_main_post():
     post = db.posts.find_one(
@@ -399,6 +400,61 @@ def show_main_post():
     post['_id'] = str(post['_id'])
     post['user']['_id'] = str(post['user']['_id'])
     return jsonify({'status': 200, 'post': post})
+
+
+@app.route('/v1/like_post', methods=['PATCH'])
+def like_post():
+    if not request.is_json:
+        return jsonify({'status': 400, 'message': 'it_is_not_JSON'})
+    j = request.get_json()
+    schema = {
+        '_id': {'type': 'string', 'maxlength': 24}
+    }
+    V = Validator(schema)
+    if not V.validate(j):
+        return jsonify({'status': 400, 'message': V.errors})
+    try:
+        token = request.headers['Authorization']
+    except KeyError:
+        return jsonify({'status': 403})
+    user = db.users.find_one(
+        {
+            'token': token,
+        },
+        projection={'remaining_likes': 1}
+    )
+    if user == None:
+        return jsonify({'status': 403})
+    if user['remaining_likes'] < 1:
+        return jsonify({'status': 429, 'message': 'like_daily_limit_exceeded'})
+    post = db.posts.find_one_and_update(
+        {
+            '_id': ObjectId(j['_id'])
+        },
+        {
+            '$inc': {'likes': 1}
+        },
+        projection={
+            'likes': 1, '_id': 0
+        },
+        return_document=ReturnDocument.AFTER
+    )
+    user = db.users.find_one_and_update(
+        {
+            '_id': user['_id']
+        },
+        {
+            '$inc': {'remaining_likes': -1}
+        },
+        projection={
+            'remaining_likes': 1, '_id': 0
+        },
+        return_document=ReturnDocument.AFTER
+    )
+    if post == None:
+        return jsonify({'status': 404})
+    else:
+        return jsonify({'status': 200, 'user': user, 'post': post})
 
 
 @app.route('/')
