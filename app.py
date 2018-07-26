@@ -164,6 +164,37 @@ def show_users_me():
     return jsonify({'status': 200, 'user': user})
 
 
+@app.route('/v1/users/me', methods=['PATCH'])
+def edit_user_name():
+    if not request.is_json:
+        return jsonify({'status': 400, 'message': 'it_is_not_JSON'})
+    j = request.get_json()
+    schema = {
+        'name': {'type': 'string', 'maxlength': 28, 'minlength': 1}
+    }
+    V = Validator(schema)
+    if not V.validate(j):
+        return jsonify({'status': 400, 'message': V.errors})    
+    try:
+        token = request.headers['Authorization']
+    except KeyError:
+        return jsonify({'status': 403})
+    user = db.users.find_one_and_update(
+        {
+            'token': token
+        },
+        {
+            '$set': {'name': j['name']}
+        },
+        projection={'_id': 1, 'name': 1},
+        return_document=ReturnDocument.AFTER
+    )
+    if user == None:
+        return jsonify({'status': 403})
+    user['_id'] = str(user['_id'])
+    return jsonify({'status': 200, 'user': user})
+
+
 @app.route('/v1/posts', methods=['POST'])
 def add_post():
     if not request.is_json:
