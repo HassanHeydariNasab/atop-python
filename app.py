@@ -106,7 +106,7 @@ def activate_user():
     r_register.delete(j['mobile'])
     token = ''.join(SystemRandom().choice(
         string.ascii_uppercase + string.digits) for alphnm in range(32))
-    db.users.insert_one(
+    result = db.users.insert_one(
         {
             'mobile': j['mobile'],
             'name': user_registration_info[b'name'].decode('utf8'),
@@ -118,7 +118,8 @@ def activate_user():
             'is_reviewer': False
         }
     )
-    return jsonify({'status': 201, 'token': token})
+    user = {'_id': str(result.inserted_id), 'token': token}
+    return jsonify({'status': 201, 'user': user})
 
 
 @app.route('/v1/login', methods=['POST'])
