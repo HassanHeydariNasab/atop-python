@@ -137,10 +137,29 @@ def login_user():
     )
     if user == None:
         return jsonify({'status': 403})
-    if check_password(j['password'].encode('utf8'), user['password']):
-        return jsonify({'status': 200, 'token': user['token']})
+    if check_password(j['password'].encode('utf8'), user['password'].encode('utf8')):
+        del user['password']
+        user['_id'] = str(user['_id'])
+        return jsonify({'status': 200, 'user': user})
     else:
         return jsonify({'status': 403})
+
+
+@app.route('/v1/users/me')
+def show_users_me():
+    try:
+        token = request.headers['Authorization']
+    except KeyError:
+        return jsonify({'status': 403})
+    user = db.users.find_one(
+        {
+            'token': token
+        },
+        projection={'password': 0, '_id': 0}
+    )
+    if user == None:
+        return jsonify({'status': 404})
+    return jsonify({'status': 200, 'user': user})
 
 
 @app.route('/v1/posts', methods=['POST'])
@@ -188,7 +207,42 @@ def add_post():
         {'_id': ObjectId(user['_id'])},
         {'$inc': {'remaining_posts': -1}}
     )
-    return jsonify({'status': 201, 'remaining_posts': user['remaining_posts'] - 1})
+    user['remaining_posts'] -= 1
+    del user['name']
+    del user['_id']
+    return jsonify({'status': 201, 'user': user})
+
+
+@app.route('/v1/user_posts')
+def show_user_posts():
+    try:
+        token = request.headers['Authorization']
+    except KeyError:
+        return jsonify({'status': 403})
+    user = db.users.find_one(
+        {
+            'token': token
+        },
+        projection={'_id': 1}
+    )
+    if user == None:
+        return jsonify({'status': 403})
+    posts = list(db.posts.find(
+        {
+            'user._id': user['_id'],
+            'date': datetime.datetime.utcnow().replace(microsecond=0, second=0, minute=0, hour=0)
+        },
+        projection={
+            'text': 1, 'user.name': 1, 'likes': 1,
+            'is_reviewed': 1, 'is_rejected': 1, 'is_disabled': 1
+        },
+        sort=[('_id', -1)],
+        limit=request.args.get('limit', default=10, type=int),
+        skip=request.args.get('offset', default=0, type=int)
+    ))
+    for post in posts:
+        post['_id'] = str(post['_id'])
+    return jsonify({'status': 200, 'posts': posts})
 
 
 @app.route('/v1/unreviewed_posts')
@@ -206,7 +260,7 @@ def show_unreviewed_posts():
     )
     if user == None:
         return jsonify({'status': 403})
-    posts = db.posts.find(
+    posts = list(db.posts.find(
         {
             'is_reviewed': False,
             'date': datetime.datetime.utcnow().replace(microsecond=0, second=0, minute=0, hour=0)
@@ -216,8 +270,10 @@ def show_unreviewed_posts():
         },
         limit=request.args.get('limit', default=10, type=int),
         skip=request.args.get('offset', default=0, type=int)
-    )
-    return jsonify({'status': 200, 'posts': list(posts)})
+    ))
+    for post in posts:
+        post['_id'] = str(post['_id'])
+    return jsonify({'status': 200, 'posts': posts})
 
 
 @app.route('/v1/review_post', methods=['PATCH'])
@@ -256,6 +312,7 @@ def review_post():
         update = {
             '$set': {
                 'is_reviewed': True,
+                'is_rejected': True,
                 'reviewer_id': user['_id']
             }
         }
@@ -294,10 +351,11 @@ def show_reviewed_posts():
                 'date': datetime.datetime.utcnow().replace(microsecond=0, second=0, minute=0, hour=0)
             },
             projection={
-                'text': 1, 'user.name': 1, 'likes': 1
+                'text': 1, 'user._id': 1, 'user.name': 1, 'likes': 1
             },
             limit=request.args.get('limit', default=10, type=int),
-            skip=request.args.get('offset', default=0, type=int)
+            skip=request.args.get('offset', default=0, type=int),
+            sort=[('likes', -1)]
         )
     else:
         posts = db.posts.find(
@@ -309,13 +367,18 @@ def show_reviewed_posts():
                 '$text': {'$search': j['search']}
             },
             projection={
-                'text': 1, 'user.name': 1, 'likes': 1, 'score': {'$meta': 'textScore'}
+                'text': 1, 'user._id': 1, 'user.name': 1, 'likes': 1, 'score': {'$meta': 'textScore'}
             },
             limit=request.args.get('limit', default=10, type=int),
             skip=request.args.get('offset', default=0, type=int),
             sort=[('score', {'$meta': 'textScore'})]
         )
-    return jsonify({'status': 200, 'posts': list(posts)})
+    posts = list(posts)
+    for post in posts:
+        post['_id'] = str(post['_id'])
+        post['user']['_id'] = str(post['user']['_id'])
+    return jsonify({'status': 200, 'posts': posts})
+
 
 
 @app.route('/v1/main_post')
@@ -333,6 +396,8 @@ def show_main_post():
     )
     if post == None:
         return jsonify({'status': 404})
+    post['_id'] = str(post['_id'])
+    post['user']['_id'] = str(post['user']['_id'])
     return jsonify({'status': 200, 'post': post})
 
 
