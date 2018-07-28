@@ -43,16 +43,16 @@ def digits_farsify(digits: str):
 @app.route('/v1/users', methods=['POST'])
 def register_user():
     if not request.is_json:
-        return jsonify({'status': 400, 'message': 'it_is_not_JSON'})
+        return jsonify({'status': 415, 'message': 'it_is_not_JSON'})
     j = request.get_json()
     schema = {
         'mobile': {'type': 'string', 'maxlength': 30},
-        'name': {'type': 'string', 'maxlength': 64},
+        'name': {'type': 'string', 'maxlength': 36, 'minlength': 1},
         'password': {'type': 'string'}
     }
     V = Validator(schema)
     if not V.validate(j):
-        return jsonify({'status': 400, 'message': V.errors})
+        return jsonify({'status': 400, 'errors': V.errors, 'message': 'invalid_format'})
     # mobile format: +989123456789
     if j['mobile'][0] != '+':
         return jsonify({'status': 400, 'message': 'malformed_mobile'})
@@ -64,7 +64,7 @@ def register_user():
         api = KavenegarAPI(KAVENEGAR_APIKEY)
         params = {
             'receptor': j['mobile'],
-            'message': 'سلام. کد فعال‌سازی شما در نیشه: '+digits_farsify(code),
+            'message': 'سلام. کد فعال‌سازی حساب کاربری شما در نیشه: '+digits_farsify(code),
         }
         response = api.sms_send(params)
         print(response)
@@ -91,15 +91,15 @@ def register_user():
 @app.route('/v1/activate', methods=['POST'])
 def activate_user():
     if not request.is_json:
-        return jsonify({'status': 400, 'message': 'it_is_not_JSON'})
+        return jsonify({'status': 415, 'message': 'it_is_not_JSON'})
     j = request.get_json()
     schema = {
         'mobile': {'type': 'string', 'maxlength': 30},    
-        'code': {'type': 'string', 'maxlength': 5, 'minlength': 5}
+        'code': {'type': 'string'}
     }
     V = Validator(schema)
     if not V.validate(j):
-        return jsonify({'status': 400, 'message': V.errors})
+        return jsonify({'status': 400, 'errors': V.errors, 'message': 'invalid_format'})
     user_registration_info = r_register.hgetall(j['mobile'])
     if j['code'] != user_registration_info[b'code'].decode('utf8'):
         return jsonify({'status': 403, 'message': 'incorrect_code'})
@@ -125,7 +125,7 @@ def activate_user():
 @app.route('/v1/login', methods=['POST'])
 def login_user():
     if not request.is_json:
-        return jsonify({'status': 400, 'message': 'it_is_not_JSON'})
+        return jsonify({'status': 415, 'message': 'it_is_not_JSON'})
     j = request.get_json()
     schema = {
         'mobile': {'type': 'string', 'maxlength': 30},
@@ -133,23 +133,105 @@ def login_user():
     }
     V = Validator(schema)
     if not V.validate(j):
-        return jsonify({'status': 400, 'message': V.errors})
+        return jsonify({'status': 400, 'errors': V.errors, 'message': 'invalid_format'})
     user = db.users.find_one(
         {'mobile': j['mobile']},
         projection = {'password': 1, 'token': 1}
     )
     if user == None:
-        return jsonify({'status': 403})
-    if check_password(j['password'].encode('utf8'), user['password'].encode('utf8')):
+        return jsonify({'status': 403, 'message': 'mobile_or_password_incorrect'})
+    if check_password(j['password'].encode('utf8'), user['password']):
         del user['password']
         user['_id'] = str(user['_id'])
         return jsonify({'status': 200, 'user': user})
     else:
-        return jsonify({'status': 403})
+        return jsonify({'status': 403, 'message': 'mobile_or_password_incorrect'})
+
+
+@app.route('/v1/request_password_reset', methods=['POST'])
+def request_password_reset():
+    if not request.is_json:
+        return jsonify({'status': 415, 'message': 'it_is_not_JSON'})
+    j = request.get_json()
+    schema = {
+        'mobile': {'type': 'string', 'maxlength': 30}
+    }
+    V = Validator(schema)
+    if not V.validate(j):
+        return jsonify({'status': 400, 'errors': V.errors, 'message': 'invalid_format'})
+    # mobile format: +989123456789
+    if j['mobile'][0] != '+':
+        return jsonify({'status': 400, 'message': 'malformed_mobile'})
+    if db.users.find_one({'mobile': j['mobile']}, projection={'mobile': 1}) == None:
+        return jsonify({'status': 404, 'message': 'no_such_mobile'})
+    code = ''.join(SystemRandom().choice(
+            string.digits) for digit in range(8))
+    try:
+        api = KavenegarAPI(KAVENEGAR_APIKEY)
+        params = {
+            'receptor': j['mobile'],
+            'message': 'سلام. کد بازیابی گذرواژهٔ شما در نیشه: '+digits_farsify(code),
+        }
+        response = api.sms_send(params)
+        print(response)
+    except APIException as e:
+        print(e)
+        return jsonify({'status': 500, 'message': 'sms_failed'})
+    except HTTPException as e:
+        print(e)
+        return jsonify({'status': 500, 'message': 'sms_failed'})
+    except Exception as e:
+        print(e)
+        return jsonify({'status': 500, 'message': 'sms_failed'})
+    else:
+        r_password_reset.set(
+            j['mobile'], code, ex=3*3600
+        )
+    return jsonify({'status': 200})
+
+
+@app.route('/v1/reset_password', methods=['PATCH'])
+def reset_password():
+    if not request.is_json:
+        return jsonify({'status': 415, 'message': 'it_is_not_JSON'})
+    j = request.get_json()
+    schema = {
+        'mobile': {'type': 'string', 'maxlength': 30},
+        'code': {'type': 'string'},
+        'password': {'type': 'string'}
+    }
+    V = Validator(schema)
+    if not V.validate(j):
+        return jsonify({'status': 400, 'errors': V.errors, 'message': 'invalid_format'})
+    # mobile format: +989123456789
+    if j['mobile'][0] != '+':
+        return jsonify({'status': 400, 'message': 'malformed_mobile'})
+    code = r_password_reset.get(j['mobile'])
+    if j['code'] == code.decode('utf8'):
+        r_password_reset.delete(j['mobile'])
+        token = ''.join(SystemRandom().choice(
+            string.ascii_uppercase + string.digits) for alphnm in range(32))
+        user = db.users.find_one_and_update(
+            {
+                'mobile': j['mobile']
+            },
+            {
+                '$set': {
+                    'password': get_hashed_password(j['password'].encode('utf8')),
+                    'token': token
+                }
+            },
+            projection={'mobile': 1}
+        )
+        if user == None:
+            return jsonify({'status': 404, 'message': 'no_such_mobile'})
+        return jsonify({'status': 200})
+    else:
+        return jsonify({'status': 403, 'message': 'incorrect_code'})
 
 
 @app.route('/v1/users/me')
-def show_users_me():
+def show_me():
     try:
         token = request.headers['Authorization']
     except KeyError:
@@ -161,7 +243,7 @@ def show_users_me():
         projection={'password': 0, '_id': 0}
     )
     if user == None:
-        return jsonify({'status': 404})
+        return jsonify({'status': 403})
     return jsonify({'status': 200, 'user': user})
 
 
@@ -171,11 +253,11 @@ def edit_user_name():
         return jsonify({'status': 400, 'message': 'it_is_not_JSON'})
     j = request.get_json()
     schema = {
-        'name': {'type': 'string', 'maxlength': 28, 'minlength': 1}
+        'name': {'type': 'string', 'maxlength': 36, 'minlength': 1}
     }
     V = Validator(schema)
     if not V.validate(j):
-        return jsonify({'status': 400, 'message': V.errors})    
+        return jsonify({'status': 400, 'errors': V.errors, 'message': 'invalid_format'})
     try:
         token = request.headers['Authorization']
     except KeyError:
@@ -199,14 +281,14 @@ def edit_user_name():
 @app.route('/v1/posts', methods=['POST'])
 def add_post():
     if not request.is_json:
-        return jsonify({'status': 400, 'message': 'it_is_not_JSON'})
+        return jsonify({'status': 415, 'message': 'it_is_not_JSON'})
     j = request.get_json()
     schema = {
-        'text': {'type': 'string', 'maxlength': 200}
+        'text': {'type': 'string', 'maxlength': 200, 'minlength': 1}
     }
     V = Validator(schema)
     if not V.validate(j):
-        return jsonify({'status': 400, 'message': V.errors})
+        return jsonify({'status': 400, 'errors': V.errors, 'message': 'invalid_format'})    
     try:
         token = request.headers['Authorization']
     except KeyError:
@@ -220,6 +302,8 @@ def add_post():
             'name': 1
         }
     )
+    if user == None:
+        return jsonify({'status': 403})
     if user['remaining_posts'] < 1:
         return jsonify({'status': 429, 'message': 'POST_DAILY_LIMIT_EXCEEDED'})
     db.posts.insert_one(
@@ -313,7 +397,7 @@ def show_unreviewed_posts():
 @app.route('/v1/review_post', methods=['PATCH'])
 def review_post():
     if not request.is_json:
-        return jsonify({'status': 400, 'message': 'it_is_not_JSON'})
+        return jsonify({'status': 415, 'message': 'it_is_not_JSON'})
     j = request.get_json()
     schema = {
         '_id': {'type': 'string', 'maxlength': 24},
@@ -321,7 +405,7 @@ def review_post():
     }
     V = Validator(schema)
     if not V.validate(j):
-        return jsonify({'status': 400, 'message': V.errors})
+        return jsonify({'status': 400, 'errors': V.errors, 'message': 'invalid_format'})
     try:
         token = request.headers['Authorization']
     except KeyError:
@@ -368,14 +452,14 @@ def review_post():
 @app.route('/v1/reviewed_posts', methods=['POST'])
 def show_reviewed_posts():
     if not request.is_json:
-        return jsonify({'status': 400, 'message': 'it_is_not_JSON'})
+        return jsonify({'status': 415, 'message': 'it_is_not_JSON'})
     j = request.get_json()
     schema = {
         'search': {'type': 'string', 'maxlength': 200}
     }
     V = Validator(schema)
     if not V.validate(j):
-        return jsonify({'status': 400, 'message': V.errors})
+        return jsonify({'status': 400, 'errors': V.errors, 'message': 'invalid_format'})    
     if j['search'] == '':
         posts = db.posts.find(
             {
@@ -437,14 +521,14 @@ def show_main_post():
 @app.route('/v1/like_post', methods=['PATCH'])
 def like_post():
     if not request.is_json:
-        return jsonify({'status': 400, 'message': 'it_is_not_JSON'})
+        return jsonify({'status': 415, 'message': 'it_is_not_JSON'})
     j = request.get_json()
     schema = {
         '_id': {'type': 'string', 'maxlength': 24}
     }
     V = Validator(schema)
     if not V.validate(j):
-        return jsonify({'status': 400, 'message': V.errors})
+        return jsonify({'status': 400, 'errors': V.errors, 'message': 'invalid_format'})    
     try:
         token = request.headers['Authorization']
     except KeyError:
