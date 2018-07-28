@@ -140,7 +140,7 @@ def login_user():
     )
     if user == None:
         return jsonify({'status': 403, 'message': 'mobile_or_password_incorrect'})
-    if check_password(j['password'].encode('utf8'), user['password']):
+    if check_password(j['password'].encode('utf8'), user['password'].encode('utf8')):
         del user['password']
         user['_id'] = str(user['_id'])
         return jsonify({'status': 200, 'user': user})
