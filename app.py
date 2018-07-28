@@ -217,7 +217,7 @@ def reset_password():
             },
             {
                 '$set': {
-                    'password': get_hashed_password(j['password'].encode('utf8')),
+                    'password': get_hashed_password(j['password'].encode('utf8')).decode('utf8'),
                     'token': token
                 }
             },
