@@ -1,0 +1,2 @@
+db.users.createIndex({token: 1})
+db.posts.createIndex({text: 'text'})
