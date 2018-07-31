@@ -250,7 +250,7 @@ def show_me():
 @app.route('/v1/users/me', methods=['PATCH'])
 def edit_user_name():
     if not request.is_json:
-        return jsonify({'status': 400, 'message': 'it_is_not_JSON'})
+        return jsonify({'status': 415, 'message': 'it_is_not_JSON'})
     j = request.get_json()
     schema = {
         'name': {'type': 'string', 'maxlength': 36, 'minlength': 1}
