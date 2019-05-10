@@ -1,31 +1,33 @@
+import bcrypt
 import os
 import string
 import datetime
-from random import SystemRandom
-
 import redis
-r_register = redis.StrictRedis(host="localhost", port=6379, db=2)  # preregistration
-r_password_reset = redis.StrictRedis(host="localhost", port=6379, db=3)  # password_reset codes
+from random import SystemRandom
+from pymongo import MongoClient
+from kavenegar import KavenegarAPI, APIException, HTTPException
+from cerberus import Validator
+from flask import Flask, request, jsonify
+from bson.objectid import ObjectId
+from pymongo.collection import ReturnDocument
+r_register = redis.StrictRedis(
+    host="localhost", port=6379, db=2)  # preregistration
+r_password_reset = redis.StrictRedis(
+    host="localhost", port=6379, db=3)  # password_reset codes
 
-import bcrypt
+
 def get_hashed_password(plain_text_password):
     return bcrypt.hashpw(plain_text_password, bcrypt.gensalt())
+
+
 def check_password(plain_text_password, hashed_password):
     return bcrypt.checkpw(plain_text_password, hashed_password)
 
-from pymongo import MongoClient
+
 client = MongoClient()
 db = client.nishe
 
-from pymongo.collection import ReturnDocument
 
-from bson.objectid import ObjectId
-
-from flask import Flask, request, jsonify
-
-from cerberus import Validator
-
-from kavenegar import KavenegarAPI, APIException, HTTPException
 try:
     KAVENEGAR_APIKEY = os.environ['KAVENEGAR_APIKEY']
 except KeyError:
@@ -43,7 +45,7 @@ def digits_farsify(digits: str):
 @app.route('/v1/users', methods=['POST'])
 def register_user():
     if not request.is_json:
-        return jsonify({'status': 415, 'message': 'it_is_not_JSON'})
+        return jsonify({'message': 'it_is_not_JSON'}), 415
     j = request.get_json()
     schema = {
         'mobile': {'type': 'string', 'maxlength': 30},
@@ -52,14 +54,14 @@ def register_user():
     }
     V = Validator(schema)
     if not V.validate(j):
-        return jsonify({'status': 400, 'errors': V.errors, 'message': 'invalid_format'})
+        return jsonify({'errors': V.errors, 'message': 'invalid_format'}), 400
     # mobile format: +989123456789
     if j['mobile'][0] != '+':
-        return jsonify({'status': 400, 'message': 'malformed_mobile'})
+        return jsonify({'message': 'malformed_mobile'}), 400
     if db.users.find_one({'mobile': j['mobile']}, projection={'mobile': 1}) != None:
-        return jsonify({'status': 444, 'message': 'mobile_already_registered'})
+        return jsonify({'message': 'mobile_already_registered'}), 444
     code = ''.join(SystemRandom().choice(
-            string.digits) for digit in range(5))
+        string.digits) for digit in range(5))
     try:
         api = KavenegarAPI(KAVENEGAR_APIKEY)
         params = {
@@ -70,39 +72,39 @@ def register_user():
         print(response)
     except APIException as e:
         print(e)
-        return jsonify({'status': 500, 'message': 'sms_failed'})
+        return jsonify({'message': 'sms_failed'}), 500
     except HTTPException as e:
         print(e)
-        return jsonify({'status': 500, 'message': 'sms_failed'})
+        return jsonify({'message': 'sms_failed'}), 500
     except Exception as e:
         print(e)
-        return jsonify({'status': 500, 'message': 'sms_failed'})
+        return jsonify({'message': 'sms_failed'}), 500
     else:
         r_register.hmset(j['mobile'],
-            {
-                'name': j['name'],
-                'password': get_hashed_password(j['password'].encode('utf8')),
-                'code': code
-            }
+                         {
+            'name': j['name'],
+            'password': get_hashed_password(j['password'].encode('utf8')),
+            'code': code
+        }
         )
-    return jsonify({'status': 200})
+    return jsonify({}), 200
 
 
 @app.route('/v1/activate', methods=['POST'])
 def activate_user():
     if not request.is_json:
-        return jsonify({'status': 415, 'message': 'it_is_not_JSON'})
+        return jsonify({'message': 'it_is_not_JSON'}), 415
     j = request.get_json()
     schema = {
-        'mobile': {'type': 'string', 'maxlength': 30},    
+        'mobile': {'type': 'string', 'maxlength': 30},
         'code': {'type': 'string'}
     }
     V = Validator(schema)
     if not V.validate(j):
-        return jsonify({'status': 400, 'errors': V.errors, 'message': 'invalid_format'})
+        return jsonify({'errors': V.errors, 'message': 'invalid_format'}), 400
     user_registration_info = r_register.hgetall(j['mobile'])
     if j['code'] != user_registration_info[b'code'].decode('utf8'):
-        return jsonify({'status': 403, 'message': 'incorrect_code'})
+        return jsonify({'message': 'incorrect_code'}), 403
     r_register.delete(j['mobile'])
     token = ''.join(SystemRandom().choice(
         string.ascii_uppercase + string.digits) for alphnm in range(32))
@@ -119,13 +121,13 @@ def activate_user():
         }
     )
     user = {'_id': str(result.inserted_id), 'token': token}
-    return jsonify({'status': 201, 'user': user})
+    return jsonify({'user': user}), 201
 
 
 @app.route('/v1/login', methods=['POST'])
 def login_user():
     if not request.is_json:
-        return jsonify({'status': 415, 'message': 'it_is_not_JSON'})
+        return jsonify({'message': 'it_is_not_JSON'}), 415
     j = request.get_json()
     schema = {
         'mobile': {'type': 'string', 'maxlength': 30},
@@ -133,39 +135,39 @@ def login_user():
     }
     V = Validator(schema)
     if not V.validate(j):
-        return jsonify({'status': 400, 'errors': V.errors, 'message': 'invalid_format'})
+        return jsonify({'errors': V.errors, 'message': 'invalid_format'}), 400
     user = db.users.find_one(
         {'mobile': j['mobile']},
-        projection = {'password': 1, 'token': 1}
+        projection={'password': 1, 'token': 1}
     )
     if user == None:
-        return jsonify({'status': 403, 'message': 'mobile_or_password_incorrect'})
+        return jsonify({'message': 'mobile_or_password_incorrect'}), 403
     if check_password(j['password'].encode('utf8'), user['password'].encode('utf8')):
         del user['password']
         user['_id'] = str(user['_id'])
-        return jsonify({'status': 200, 'user': user})
+        return jsonify({'user': user}), 200
     else:
-        return jsonify({'status': 403, 'message': 'mobile_or_password_incorrect'})
+        return jsonify({'message': 'mobile_or_password_incorrect'}), 403
 
 
 @app.route('/v1/request_password_reset', methods=['POST'])
 def request_password_reset():
     if not request.is_json:
-        return jsonify({'status': 415, 'message': 'it_is_not_JSON'})
+        return jsonify({'message': 'it_is_not_JSON'}), 415
     j = request.get_json()
     schema = {
         'mobile': {'type': 'string', 'maxlength': 30}
     }
     V = Validator(schema)
     if not V.validate(j):
-        return jsonify({'status': 400, 'errors': V.errors, 'message': 'invalid_format'})
+        return jsonify({'errors': V.errors, 'message': 'invalid_format'}), 400
     # mobile format: +989123456789
     if j['mobile'][0] != '+':
-        return jsonify({'status': 400, 'message': 'malformed_mobile'})
+        return jsonify({'message': 'malformed_mobile'}), 400
     if db.users.find_one({'mobile': j['mobile']}, projection={'mobile': 1}) == None:
-        return jsonify({'status': 404, 'message': 'no_such_mobile'})
+        return jsonify({'message': 'no_such_mobile'}), 404
     code = ''.join(SystemRandom().choice(
-            string.digits) for digit in range(8))
+        string.digits) for digit in range(8))
     try:
         api = KavenegarAPI(KAVENEGAR_APIKEY)
         params = {
@@ -176,24 +178,24 @@ def request_password_reset():
         print(response)
     except APIException as e:
         print(e)
-        return jsonify({'status': 500, 'message': 'sms_failed'})
+        return jsonify({'message': 'sms_failed'}), 500
     except HTTPException as e:
         print(e)
-        return jsonify({'status': 500, 'message': 'sms_failed'})
+        return jsonify({'message': 'sms_failed'}), 500
     except Exception as e:
         print(e)
-        return jsonify({'status': 500, 'message': 'sms_failed'})
+        return jsonify({'message': 'sms_failed'}), 500
     else:
         r_password_reset.set(
             j['mobile'], code, ex=3*3600
         )
-    return jsonify({'status': 200})
+    return jsonify({}), 200
 
 
 @app.route('/v1/reset_password', methods=['PATCH'])
 def reset_password():
     if not request.is_json:
-        return jsonify({'status': 415, 'message': 'it_is_not_JSON'})
+        return jsonify({'message': 'it_is_not_JSON'}), 415
     j = request.get_json()
     schema = {
         'mobile': {'type': 'string', 'maxlength': 30},
@@ -202,10 +204,10 @@ def reset_password():
     }
     V = Validator(schema)
     if not V.validate(j):
-        return jsonify({'status': 400, 'errors': V.errors, 'message': 'invalid_format'})
+        return jsonify({'errors': V.errors, 'message': 'invalid_format'}), 400
     # mobile format: +989123456789
     if j['mobile'][0] != '+':
-        return jsonify({'status': 400, 'message': 'malformed_mobile'})
+        return jsonify({'message': 'malformed_mobile'}), 400
     code = r_password_reset.get(j['mobile'])
     if j['code'] == code.decode('utf8'):
         r_password_reset.delete(j['mobile'])
@@ -224,10 +226,10 @@ def reset_password():
             projection={'mobile': 1}
         )
         if user == None:
-            return jsonify({'status': 404, 'message': 'no_such_mobile'})
-        return jsonify({'status': 200})
+            return jsonify({'message': 'no_such_mobile'}), 404
+        return jsonify({}), 200
     else:
-        return jsonify({'status': 403, 'message': 'incorrect_code'})
+        return jsonify({'message': 'incorrect_code'}), 403
 
 
 @app.route('/v1/users/me')
@@ -235,7 +237,7 @@ def show_me():
     try:
         token = request.headers['Authorization']
     except KeyError:
-        return jsonify({'status': 403})
+        return jsonify({}), 401
     user = db.users.find_one(
         {
             'token': token
@@ -243,25 +245,25 @@ def show_me():
         projection={'password': 0, '_id': 0}
     )
     if user == None:
-        return jsonify({'status': 403})
-    return jsonify({'status': 200, 'user': user})
+        return jsonify({}), 401
+    return jsonify({'user': user}), 200
 
 
 @app.route('/v1/users/me', methods=['PATCH'])
 def edit_user_name():
     if not request.is_json:
-        return jsonify({'status': 415, 'message': 'it_is_not_JSON'})
+        return jsonify({'message': 'it_is_not_JSON'}), 415
     j = request.get_json()
     schema = {
         'name': {'type': 'string', 'maxlength': 36, 'minlength': 1}
     }
     V = Validator(schema)
     if not V.validate(j):
-        return jsonify({'status': 400, 'errors': V.errors, 'message': 'invalid_format'})
+        return jsonify({'errors': V.errors, 'message': 'invalid_format'}), 400
     try:
         token = request.headers['Authorization']
     except KeyError:
-        return jsonify({'status': 403})
+        return jsonify({}), 401
     user = db.users.find_one_and_update(
         {
             'token': token
@@ -273,39 +275,39 @@ def edit_user_name():
         return_document=ReturnDocument.AFTER
     )
     if user == None:
-        return jsonify({'status': 403})
+        return jsonify({}), 401
     user['_id'] = str(user['_id'])
-    return jsonify({'status': 200, 'user': user})
+    return jsonify({'user': user}), 200
 
 
 @app.route('/v1/posts', methods=['POST'])
 def add_post():
     if not request.is_json:
-        return jsonify({'status': 415, 'message': 'it_is_not_JSON'})
+        return jsonify({'message': 'it_is_not_JSON'}), 415
     j = request.get_json()
     schema = {
         'text': {'type': 'string', 'maxlength': 200, 'minlength': 1}
     }
     V = Validator(schema)
     if not V.validate(j):
-        return jsonify({'status': 400, 'errors': V.errors, 'message': 'invalid_format'})    
+        return jsonify({'errors': V.errors, 'message': 'invalid_format'}), 400
     try:
         token = request.headers['Authorization']
     except KeyError:
-        return jsonify({'status': 403})
+        return jsonify({}), 401
     user = db.users.find_one(
         {
             'token': token
         },
-        projection = {
+        projection={
             'remaining_posts': 1,
             'name': 1
         }
     )
     if user == None:
-        return jsonify({'status': 403})
+        return jsonify({}), 401
     if user['remaining_posts'] < 1:
-        return jsonify({'status': 429, 'message': 'POST_DAILY_LIMIT_EXCEEDED'})
+        return jsonify({'message': 'POST_DAILY_LIMIT_EXCEEDED'}), 429
     db.posts.insert_one(
         {
             'text': j['text'],
@@ -328,7 +330,7 @@ def add_post():
     user['remaining_posts'] -= 1
     del user['name']
     del user['_id']
-    return jsonify({'status': 201, 'user': user})
+    return jsonify({'user': user}), 201
 
 
 @app.route('/v1/user_posts')
@@ -336,7 +338,7 @@ def show_user_posts():
     try:
         token = request.headers['Authorization']
     except KeyError:
-        return jsonify({'status': 403})
+        return jsonify({}), 401
     user = db.users.find_one(
         {
             'token': token
@@ -344,7 +346,7 @@ def show_user_posts():
         projection={'_id': 1}
     )
     if user == None:
-        return jsonify({'status': 403})
+        return jsonify({}), 401
     posts = list(db.posts.find(
         {
             'user._id': user['_id'],
@@ -360,7 +362,7 @@ def show_user_posts():
     ))
     for post in posts:
         post['_id'] = str(post['_id'])
-    return jsonify({'status': 200, 'posts': posts})
+    return jsonify({'posts': posts}), 200
 
 
 @app.route('/v1/unreviewed_posts')
@@ -368,7 +370,7 @@ def show_unreviewed_posts():
     try:
         token = request.headers['Authorization']
     except KeyError:
-        return jsonify({'status': 403})
+        return jsonify({}), 401
     user = db.users.find_one(
         {
             'token': token,
@@ -377,7 +379,7 @@ def show_unreviewed_posts():
         projection={'_id': 1}
     )
     if user == None:
-        return jsonify({'status': 403})
+        return jsonify({}), 401
     posts = list(db.posts.find(
         {
             'is_reviewed': False,
@@ -391,13 +393,13 @@ def show_unreviewed_posts():
     ))
     for post in posts:
         post['_id'] = str(post['_id'])
-    return jsonify({'status': 200, 'posts': posts})
+    return jsonify({'posts': posts}), 200
 
 
 @app.route('/v1/review_post', methods=['PATCH'])
 def review_post():
     if not request.is_json:
-        return jsonify({'status': 415, 'message': 'it_is_not_JSON'})
+        return jsonify({'message': 'it_is_not_JSON'}), 415
     j = request.get_json()
     schema = {
         '_id': {'type': 'string', 'maxlength': 24},
@@ -405,11 +407,11 @@ def review_post():
     }
     V = Validator(schema)
     if not V.validate(j):
-        return jsonify({'status': 400, 'errors': V.errors, 'message': 'invalid_format'})
+        return jsonify({'errors': V.errors, 'message': 'invalid_format'}), 400
     try:
         token = request.headers['Authorization']
     except KeyError:
-        return jsonify({'status': 403})
+        return jsonify({}), 401
     user = db.users.find_one(
         {
             'token': token,
@@ -418,7 +420,7 @@ def review_post():
         projection={'_id': 1}
     )
     if user == None:
-        return jsonify({'status': 403})
+        return jsonify({}), 401
     if j['action'] == 'accept':
         update = {
             '$set': {
@@ -426,7 +428,7 @@ def review_post():
                 'reviewer_id': user['_id']
             }
         }
-    else: # if j['action'] == 'reject'
+    else:  # if j['action'] == 'reject'
         update = {
             '$set': {
                 'is_reviewed': True,
@@ -442,24 +444,24 @@ def review_post():
         update
     )
     if result.matched_count == 0:
-        return jsonify({'status': 404})
+        return jsonify({}), 404
     elif result.modified_count == 1:
-        return jsonify({'status': 200})
+        return jsonify({}), 200
     else:
-        return jsonify({'status': 500})
+        return jsonify({}), 500
 
 
 @app.route('/v1/reviewed_posts', methods=['POST'])
 def show_reviewed_posts():
     if not request.is_json:
-        return jsonify({'status': 415, 'message': 'it_is_not_JSON'})
+        return jsonify({'message': 'it_is_not_JSON'}), 415
     j = request.get_json()
     schema = {
         'search': {'type': 'string', 'maxlength': 200}
     }
     V = Validator(schema)
     if not V.validate(j):
-        return jsonify({'status': 400, 'errors': V.errors, 'message': 'invalid_format'})    
+        return jsonify({'errors': V.errors, 'message': 'invalid_format'}), 400
     if j['search'] == '':
         posts = db.posts.find(
             {
@@ -495,7 +497,7 @@ def show_reviewed_posts():
     for post in posts:
         post['_id'] = str(post['_id'])
         post['user']['_id'] = str(post['user']['_id'])
-    return jsonify({'status': 200, 'posts': posts})
+    return jsonify({'posts': posts}), 200
 
 
 @app.route('/v1/main_post')
@@ -512,27 +514,27 @@ def show_main_post():
         limit=1
     )
     if post == None:
-        return jsonify({'status': 404})
+        return jsonify({}), 404
     post['_id'] = str(post['_id'])
     post['user']['_id'] = str(post['user']['_id'])
-    return jsonify({'status': 200, 'post': post})
+    return jsonify({'post': post}), 200
 
 
 @app.route('/v1/like_post', methods=['PATCH'])
 def like_post():
     if not request.is_json:
-        return jsonify({'status': 415, 'message': 'it_is_not_JSON'})
+        return jsonify({'message': 'it_is_not_JSON'}), 415
     j = request.get_json()
     schema = {
         '_id': {'type': 'string', 'maxlength': 24}
     }
     V = Validator(schema)
     if not V.validate(j):
-        return jsonify({'status': 400, 'errors': V.errors, 'message': 'invalid_format'})    
+        return jsonify({'errors': V.errors, 'message': 'invalid_format'}), 400
     try:
         token = request.headers['Authorization']
     except KeyError:
-        return jsonify({'status': 403})
+        return jsonify({}), 401
     user = db.users.find_one(
         {
             'token': token,
@@ -540,9 +542,9 @@ def like_post():
         projection={'remaining_likes': 1}
     )
     if user == None:
-        return jsonify({'status': 403})
+        return jsonify({}), 401
     if user['remaining_likes'] < 1:
-        return jsonify({'status': 429, 'message': 'like_daily_limit_exceeded'})
+        return jsonify({'message': 'like_daily_limit_exceeded'}), 429
     post = db.posts.find_one_and_update(
         {
             '_id': ObjectId(j['_id'])
@@ -568,9 +570,9 @@ def like_post():
         return_document=ReturnDocument.AFTER
     )
     if post == None:
-        return jsonify({'status': 404})
+        return jsonify({}), 404
     else:
-        return jsonify({'status': 200, 'user': user, 'post': post})
+        return jsonify({'user': user, 'post': post}), 200
 
 
 @app.route('/')

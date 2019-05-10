@@ -1,3 +1,6 @@
+# use cron to run this command daily:
+# cd /home/USER/nishe-server && /usr/local/bin/pipenv run python3 /home/USER/nishe-server/daily.py 2>&1 | logger -t
+
 from pymongo import MongoClient
 client = MongoClient()
 db = client.nishe
@@ -14,7 +17,7 @@ result = db.users.update_many({},
         }
     }
 )
-print('[DAILY] users daily charging result: matched_count: {}  modified_count: {}'.format(
+print('[result] users daily charging: matched_count: {}  modified_count: {}'.format(
         result.matched_count, result.modified_count
     )
 )
