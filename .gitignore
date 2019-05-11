@@ -1,2 +1,7 @@
 .vscode
 *~
+
+# OS
+.directory
+
+local_config.js

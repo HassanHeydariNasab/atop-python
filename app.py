@@ -3,6 +3,9 @@ import os
 import string
 import datetime
 import redis
+import jwt
+import r_code
+import jwt_user_id
 from random import SystemRandom
 from pymongo import MongoClient
 from kavenegar import KavenegarAPI, APIException, HTTPException
@@ -10,28 +13,11 @@ from cerberus import Validator
 from flask import Flask, request, jsonify
 from bson.objectid import ObjectId
 from pymongo.collection import ReturnDocument
-r_register = redis.StrictRedis(
-    host="localhost", port=6379, db=2)  # preregistration
-r_password_reset = redis.StrictRedis(
-    host="localhost", port=6379, db=3)  # password_reset codes
-
-
-def get_hashed_password(plain_text_password):
-    return bcrypt.hashpw(plain_text_password, bcrypt.gensalt())
-
-
-def check_password(plain_text_password, hashed_password):
-    return bcrypt.checkpw(plain_text_password, hashed_password)
+from local_config import SECRET, KAVENEGAR_APIKEY
 
 
 client = MongoClient()
 db = client.nishe
-
-
-try:
-    KAVENEGAR_APIKEY = os.environ['KAVENEGAR_APIKEY']
-except KeyError:
-    print('KAVENEGAR_APIKEY not found in env')
 
 app = Flask(__name__)
 
@@ -42,34 +28,31 @@ def digits_farsify(digits: str):
         '6', '۶').replace('7', '۷').replace('8', '۸').replace('9', '۹')
 
 
-@app.route('/v1/users', methods=['POST'])
-def register_user():
+@app.route('/v1/request_code', methods=['POST'])
+def request_code():
     if not request.is_json:
         return jsonify({'message': 'it_is_not_JSON'}), 415
     j = request.get_json()
     schema = {
-        'mobile': {'type': 'string', 'maxlength': 30},
-        'name': {'type': 'string', 'maxlength': 36, 'minlength': 1},
-        'password': {'type': 'string'}
+        'mobile': {'type': 'string', 'maxlength': 30}
     }
     V = Validator(schema)
     if not V.validate(j):
         return jsonify({'errors': V.errors, 'message': 'invalid_format'}), 400
-    # mobile format: +989123456789
-    if j['mobile'][0] != '+':
-        return jsonify({'message': 'malformed_mobile'}), 400
+    is_user_exists = False
     if db.users.find_one({'mobile': j['mobile']}, projection={'mobile': 1}) != None:
-        return jsonify({'message': 'mobile_already_registered'}), 444
+        is_user_exists = True
     code = ''.join(SystemRandom().choice(
         string.digits) for digit in range(5))
+    print(code)
     try:
         api = KavenegarAPI(KAVENEGAR_APIKEY)
         params = {
             'receptor': j['mobile'],
-            'message': 'سلام. کد فعال‌سازی حساب کاربری شما در نیشه: '+digits_farsify(code),
+            'message': 'سلام. کد فعال‌سازی: '+digits_farsify(code),
         }
-        response = api.sms_send(params)
-        print(response)
+        # response = api.sms_send(params)
+        # print(response)
     except APIException as e:
         print(e)
         return jsonify({'message': 'sms_failed'}), 500
@@ -80,18 +63,43 @@ def register_user():
         print(e)
         return jsonify({'message': 'sms_failed'}), 500
     else:
-        r_register.hmset(j['mobile'],
-                         {
+        r_code.store(j['mobile'], code)
+    return jsonify({'is_user_exists': is_user_exists}), 201
+
+
+@app.route('/v1/register', methods=['POST'])
+def register_user():
+    if not request.is_json:
+        return jsonify({'message': 'it_is_not_JSON'}), 415
+    j = request.get_json()
+    schema = {
+        'mobile': {'type': 'string', 'maxlength': 30},
+        'name': {'type': 'string', 'maxlength': 36, 'minlength': 1},
+        'code': {'type': 'string'}
+    }
+    V = Validator(schema)
+    if not V.validate(j):
+        return jsonify({'errors': V.errors, 'message': 'invalid_format'}), 400
+    if not r_code.is_valid(j['mobile'], j['code']):
+        return jsonify({'message': 'invalid_mobile_or_code'}), 401
+    if db.users.find_one({'mobile': j['mobile']}, projection={'mobile': 1}) != None:
+        return jsonify({'message': 'mobile_already_registered'}), 444
+    result = db.users.insert_one(
+        {
+            'mobile': j['mobile'],
             'name': j['name'],
-            'password': get_hashed_password(j['password'].encode('utf8')),
-            'code': code
+            'remaining_likes': 100,
+            'remaining_posts': 100,
+            'liked': 0,
+            'is_reviewer': False
         }
-        )
-    return jsonify({}), 200
+    )
+    token = jwt_user_id.generate_token(str(result.inserted_id))
+    return jsonify({'token': token}), 201
 
 
-@app.route('/v1/activate', methods=['POST'])
-def activate_user():
+@app.route('/v1/login', methods=['POST'])
+def login_user():
     if not request.is_json:
         return jsonify({'message': 'it_is_not_JSON'}), 415
     j = request.get_json()
@@ -102,134 +110,16 @@ def activate_user():
     V = Validator(schema)
     if not V.validate(j):
         return jsonify({'errors': V.errors, 'message': 'invalid_format'}), 400
-    user_registration_info = r_register.hgetall(j['mobile'])
-    if j['code'] != user_registration_info[b'code'].decode('utf8'):
-        return jsonify({'message': 'incorrect_code'}), 403
-    r_register.delete(j['mobile'])
-    token = ''.join(SystemRandom().choice(
-        string.ascii_uppercase + string.digits) for alphnm in range(32))
-    result = db.users.insert_one(
-        {
-            'mobile': j['mobile'],
-            'name': user_registration_info[b'name'].decode('utf8'),
-            'password': user_registration_info[b'password'].decode('utf8'),
-            'token': token,
-            'remaining_likes': 100,
-            'remaining_posts': 100,
-            'earned_likes': 0,
-            'is_reviewer': False
-        }
-    )
-    user = {'_id': str(result.inserted_id), 'token': token}
-    return jsonify({'user': user}), 201
-
-
-@app.route('/v1/login', methods=['POST'])
-def login_user():
-    if not request.is_json:
-        return jsonify({'message': 'it_is_not_JSON'}), 415
-    j = request.get_json()
-    schema = {
-        'mobile': {'type': 'string', 'maxlength': 30},
-        'password': {'type': 'string'}
-    }
-    V = Validator(schema)
-    if not V.validate(j):
-        return jsonify({'errors': V.errors, 'message': 'invalid_format'}), 400
+    if not r_code.is_valid(j['mobile'], j['code']):
+        return jsonify({'message': 'invalid_mobile_or_code'}), 401
     user = db.users.find_one(
-        {'mobile': j['mobile']},
-        projection={'password': 1, 'token': 1}
+        {'mobile': j['mobile']}
     )
+    # unexpected
     if user == None:
-        return jsonify({'message': 'mobile_or_password_incorrect'}), 403
-    if check_password(j['password'].encode('utf8'), user['password'].encode('utf8')):
-        del user['password']
-        user['_id'] = str(user['_id'])
-        return jsonify({'user': user}), 200
-    else:
-        return jsonify({'message': 'mobile_or_password_incorrect'}), 403
-
-
-@app.route('/v1/request_password_reset', methods=['POST'])
-def request_password_reset():
-    if not request.is_json:
-        return jsonify({'message': 'it_is_not_JSON'}), 415
-    j = request.get_json()
-    schema = {
-        'mobile': {'type': 'string', 'maxlength': 30}
-    }
-    V = Validator(schema)
-    if not V.validate(j):
-        return jsonify({'errors': V.errors, 'message': 'invalid_format'}), 400
-    # mobile format: +989123456789
-    if j['mobile'][0] != '+':
-        return jsonify({'message': 'malformed_mobile'}), 400
-    if db.users.find_one({'mobile': j['mobile']}, projection={'mobile': 1}) == None:
-        return jsonify({'message': 'no_such_mobile'}), 404
-    code = ''.join(SystemRandom().choice(
-        string.digits) for digit in range(8))
-    try:
-        api = KavenegarAPI(KAVENEGAR_APIKEY)
-        params = {
-            'receptor': j['mobile'],
-            'message': 'سلام. کد بازیابی گذرواژهٔ شما در نیشه: '+digits_farsify(code),
-        }
-        response = api.sms_send(params)
-        print(response)
-    except APIException as e:
-        print(e)
-        return jsonify({'message': 'sms_failed'}), 500
-    except HTTPException as e:
-        print(e)
-        return jsonify({'message': 'sms_failed'}), 500
-    except Exception as e:
-        print(e)
-        return jsonify({'message': 'sms_failed'}), 500
-    else:
-        r_password_reset.set(
-            j['mobile'], code, ex=3*3600
-        )
-    return jsonify({}), 200
-
-
-@app.route('/v1/reset_password', methods=['PATCH'])
-def reset_password():
-    if not request.is_json:
-        return jsonify({'message': 'it_is_not_JSON'}), 415
-    j = request.get_json()
-    schema = {
-        'mobile': {'type': 'string', 'maxlength': 30},
-        'code': {'type': 'string'},
-        'password': {'type': 'string'}
-    }
-    V = Validator(schema)
-    if not V.validate(j):
-        return jsonify({'errors': V.errors, 'message': 'invalid_format'}), 400
-    # mobile format: +989123456789
-    if j['mobile'][0] != '+':
-        return jsonify({'message': 'malformed_mobile'}), 400
-    code = r_password_reset.get(j['mobile'])
-    if j['code'] == code.decode('utf8'):
-        r_password_reset.delete(j['mobile'])
-        token = ''.join(SystemRandom().choice(
-            string.ascii_uppercase + string.digits) for alphnm in range(32))
-        user = db.users.find_one_and_update(
-            {
-                'mobile': j['mobile']
-            },
-            {
-                '$set': {
-                    'password': get_hashed_password(j['password'].encode('utf8')).decode('utf8'),
-                    'token': token
-                }
-            },
-            projection={'mobile': 1}
-        )
-        if user == None:
-            return jsonify({'message': 'no_such_mobile'}), 404
-        return jsonify({}), 200
-    else:
-        return jsonify({'message': 'incorrect_code'}), 403
+        return jsonify({'message': 'invalid_mobile_or_code'}), 401
+    token = jwt_user_id.generate_token(str(user['_id']))
+    return jsonify({'token': token}), 200
 
 
 @app.route('/v1/users/me')
@@ -238,14 +128,17 @@ def show_me():
         token = request.headers['Authorization']
     except KeyError:
         return jsonify({}), 401
+    user_id = jwt_user_id.decode_user_id(token)
+    if user_id == '':
+        return jsonify({}), 401
     user = db.users.find_one(
         {
-            'token': token
-        },
-        projection={'password': 0, '_id': 0}
+            '_id': ObjectId(user_id)
+        }
     )
     if user == None:
         return jsonify({}), 401
+    user['_id'] = str(user['_id'])
     return jsonify({'user': user}), 200
 
 
