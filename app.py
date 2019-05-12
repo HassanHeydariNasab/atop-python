@@ -270,7 +270,7 @@ def show_unreviewed_posts():
         return jsonify({}), 401
     user = db.users.find_one(
         {
-            '_id': ObjectId(user_id)
+            '_id': ObjectId(user_id),
             'is_reviewer': True
         },
         projection={'_id': 1}
@@ -314,7 +314,7 @@ def review_post():
         return jsonify({}), 401
     user = db.users.find_one(
         {
-            '_id': ObjectId(user_id)
+            '_id': ObjectId(user_id),
             'is_reviewer': True
         },
         projection={'_id': 1}
