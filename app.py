@@ -90,7 +90,6 @@ def register_user():
             'name': j['name'],
             'remaining_likes': 100,
             'remaining_posts': 100,
-            'liked': 0,
             'is_reviewer': False
         }
     )
@@ -177,7 +176,7 @@ def edit_user_name():
 
 
 @app.route('/v1/posts', methods=['POST'])
-def add_post():
+def create_post():
     if not request.is_json:
         return jsonify({'message': 'The request is not JSON!'}), 415
     j = request.get_json()
@@ -205,31 +204,19 @@ def add_post():
     )
     if user == None:
         return jsonify({}), 401
-    if user['remaining_posts'] < 1:
-        return jsonify({'message': 'Sorry, your daily limit for post exceeded!'}), 429
     db.posts.insert_one(
         {
             'text': j['text'],
-            'is_reviewed': False,
-            'is_rejected': False,
-            'is_disabled': False,
             'user': {
                 '_id': user['_id'],
                 'name': user['name']
             },
             'date': datetime.datetime.utcnow().replace(microsecond=0, second=0, minute=0, hour=0),
             'datetime': datetime.datetime.utcnow(),
-            'likes': 0
+            'liked': 0
         }
     )
-    db.users.update_one(
-        {'_id': ObjectId(user['_id'])},
-        {'$inc': {'remaining_posts': -1}}
-    )
-    user['remaining_posts'] -= 1
-    del user['name']
-    del user['_id']
-    return jsonify({'user': user}), 201
+    return jsonify({}), 201
 
 
 @app.route('/v1/user_posts')
@@ -247,7 +234,7 @@ def show_user_posts():
             'date': datetime.datetime.utcnow().replace(microsecond=0, second=0, minute=0, hour=0)
         },
         projection={
-            'text': 1, 'user.name': 1, 'likes': 1,
+            'text': 1, 'user.name': 1, 'liked': 1,
             'is_reviewed': 1, 'is_rejected': 1, 'is_disabled': 1
         },
         sort=[('_id', -1)],
@@ -259,135 +246,29 @@ def show_user_posts():
     return jsonify({'posts': posts}), 200
 
 
-@app.route('/v1/unreviewed_posts')
-def show_unreviewed_posts():
-    try:
-        token = request.headers['Authorization']
-    except KeyError:
-        return jsonify({}), 401
-    user_id = jwt_user_id.decode_user_id(token)
-    if user_id == '':
-        return jsonify({}), 401
-    user = db.users.find_one(
-        {
-            '_id': ObjectId(user_id),
-            'is_reviewer': True
-        },
-        projection={'_id': 1}
-    )
-    if user == None:
-        return jsonify({}), 401
-    posts = list(db.posts.find(
-        {
-            'is_reviewed': False,
-            'date': datetime.datetime.utcnow().replace(microsecond=0, second=0, minute=0, hour=0)
-        },
-        projection={
-            'text': 1, 'user.name': 1
-        },
-        limit=request.args.get('limit', default=10, type=int),
-        skip=request.args.get('offset', default=0, type=int)
-    ))
-    for post in posts:
-        post['_id'] = str(post['_id'])
-    return jsonify({'posts': posts}), 200
-
-
-@app.route('/v1/review_post', methods=['PATCH'])
-def review_post():
-    if not request.is_json:
-        return jsonify({'message': 'The request is not JSON!'}), 415
-    j = request.get_json()
-    schema = {
-        '_id': {'type': 'string', 'maxlength': 24},
-        'action': {'type': 'string', 'regex': '^(accept|reject)$'}
-    }
-    V = Validator(schema)
-    if not V.validate(j):
-        return jsonify({'errors': V.errors, 'message': 'invalid format'}), 400
-    try:
-        token = request.headers['Authorization']
-    except KeyError:
-        return jsonify({}), 401
-    user_id = jwt_user_id.decode_user_id(token)
-    if user_id == '':
-        return jsonify({}), 401
-    user = db.users.find_one(
-        {
-            '_id': ObjectId(user_id),
-            'is_reviewer': True
-        },
-        projection={'_id': 1}
-    )
-    if user == None:
-        return jsonify({}), 401
-    if j['action'] == 'accept':
-        update = {
-            '$set': {
-                'is_reviewed': True,
-                'reviewer_id': ObjectId(user_id)
-            }
-        }
-    else:  # if j['action'] == 'reject'
-        update = {
-            '$set': {
-                'is_reviewed': True,
-                'is_rejected': True,
-                'reviewer_id': ObjectId(user_id)
-            }
-        }
-    result = db.posts.update_one(
-        {
-            '_id': ObjectId(j['_id']),
-            'is_reviewed': False
-        },
-        update
-    )
-    if result.matched_count == 0:
-        return jsonify({}), 404
-    elif result.modified_count == 1:
-        return jsonify({}), 200
-    else:
-        return jsonify({}), 500
-
-
-@app.route('/v1/reviewed_posts', methods=['POST'])
-def show_reviewed_posts():
-    if not request.is_json:
-        return jsonify({'message': 'The request is not JSON!'}), 415
-    j = request.get_json()
-    schema = {
-        'search': {'type': 'string', 'maxlength': 200}
-    }
-    V = Validator(schema)
-    if not V.validate(j):
-        return jsonify({'errors': V.errors, 'message': 'invalid format'}), 400
-    if j['search'] == '':
+@app.route('/v1/posts', methods=['GET'])
+def show_posts():
+    search_term = request.args.get('search', default='', type=str)
+    if search_term == '':
         posts = db.posts.find(
             {
-                'is_reviewed': True,
-                'is_rejected': False,
-                'is_disabled': False,
                 'date': datetime.datetime.utcnow().replace(microsecond=0, second=0, minute=0, hour=0)
             },
             projection={
-                'text': 1, 'user._id': 1, 'user.name': 1, 'likes': 1
+                'text': 1, 'user._id': 1, 'user.name': 1, 'liked': 1
             },
             limit=request.args.get('limit', default=10, type=int),
             skip=request.args.get('offset', default=0, type=int),
-            sort=[('likes', -1)]
+            sort=[('liked', -1)]
         )
     else:
         posts = db.posts.find(
             {
-                'is_reviewed': True,
-                'is_rejected': False,
-                'is_disabled': False,
                 'date': datetime.datetime.utcnow().replace(microsecond=0, second=0, minute=0, hour=0),
-                '$text': {'$search': j['search']}
+                '$text': {'$search': search_term}
             },
             projection={
-                'text': 1, 'user._id': 1, 'user.name': 1, 'likes': 1, 'score': {'$meta': 'textScore'}
+                'text': 1, 'user._id': 1, 'user.name': 1, 'liked': 1, 'score': {'$meta': 'textScore'}
             },
             limit=request.args.get('limit', default=10, type=int),
             skip=request.args.get('offset', default=0, type=int),
@@ -404,13 +285,10 @@ def show_reviewed_posts():
 def show_main_post():
     post = db.posts.find_one(
         {
-            'date': datetime.datetime.utcnow().replace(microsecond=0, second=0, minute=0, hour=0),
-            'is_reviewed': True,
-            'is_rejected': False,
-            'is_disabled': False
+            'date': datetime.datetime.utcnow().replace(microsecond=0, second=0, minute=0, hour=0)
         },
         projection={'user': 1, 'text': 1},
-        sort=[('likes', -1)],
+        sort=[('liked', -1)],
         limit=1
     )
     if post == None:
@@ -420,13 +298,13 @@ def show_main_post():
     return jsonify({'post': post}), 200
 
 
-@app.route('/v1/like_post', methods=['PATCH'])
-def like_post():
+@app.route('/v1/posts/<post_id>', methods=['PATCH'])
+def like_post(post_id):
     if not request.is_json:
         return jsonify({'message': 'The request is not JSON!'}), 415
     j = request.get_json()
     schema = {
-        '_id': {'type': 'string', 'maxlength': 24}
+        'liked': {'type': 'boolean'}
     }
     V = Validator(schema)
     if not V.validate(j):
@@ -449,10 +327,10 @@ def like_post():
         return jsonify({'message': 'Sorry, your daily limit for like exceeded!'}), 429
     post = db.posts.find_one_and_update(
         {
-            '_id': ObjectId(j['_id'])
+            '_id': ObjectId(post_id)
         },
         {
-            '$inc': {'likes': 1}
+            '$inc': {'liked': 1}
         },
         return_document=ReturnDocument.AFTER
     )
@@ -467,8 +345,10 @@ def like_post():
     )
     if post == None:
         return jsonify({}), 404
-    else:
-        return jsonify({'user': user, 'post': post}), 200
+    user['_id'] = str(user['_id'])
+    post['_id'] = str(post['_id'])
+    post['user']['_id'] = str(post['user']['_id'])
+    return jsonify({'user': user, 'post': post}), 200
 
 
 @app.route('/')
