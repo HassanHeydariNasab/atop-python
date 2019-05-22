@@ -38,7 +38,6 @@ def request_code():
         is_user_exists = True
     code = ''.join(SystemRandom().choice(
         string.digits) for digit in range(5))
-    print(code)
     try:
         api = KavenegarAPI(KAVENEGAR_APIKEY)
         params = {
