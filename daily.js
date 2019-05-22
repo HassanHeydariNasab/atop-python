@@ -7,8 +7,8 @@ MongoClient.connect(MONGODB_URL, {
     useNewUrlParser: true
     }, (err, client) => {
     if (err) return console.error('[DAILY] ERROR mongodb: '+err)
-    db = client.db('mutacio')
-    db.collection('users').updateMany({}, {$set: {remaining_posts: 100, remaining_likes: 100}}, (err, r) => {
+    db = client.db('atop')
+    db.collection('users').updateMany({}, {$set: {remaining_likes: 100}}, (err, r) => {
         if (err)
             console.error('[DAILY] ERROR mongodb: '+err)
         console.log('[DAILY] LOG mongodb: '+r)

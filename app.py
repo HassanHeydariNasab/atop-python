@@ -17,7 +17,7 @@ from local_config import SECRET, KAVENEGAR_APIKEY
 
 
 client = MongoClient()
-db = client.nishe
+db = client.atop
 
 app = Flask(__name__)
 

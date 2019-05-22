@@ -1,9 +1,9 @@
 # use cron to run this command daily:
-# cd /home/USER/nishe-server && /usr/local/bin/pipenv run python3 /home/USER/nishe-server/daily.py 2>&1 | logger -t
+# cd /home/USER/atop-server && /usr/local/bin/pipenv run python3 /home/USER/atop-server/daily.py 2>&1 | logger -t
 
 from pymongo import MongoClient
 client = MongoClient()
-db = client.nishe
+db = client.atop
 
 from pymongo.collection import ReturnDocument
 
@@ -13,7 +13,7 @@ from bson.objectid import ObjectId
 result = db.users.update_many({}, 
     {'$set':
         {
-            'remaining_posts': 100, 'remaining_likes': 100
+            'remaining_likes': 100
         }
     }
 )
