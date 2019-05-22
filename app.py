@@ -22,12 +22,6 @@ db = client.nishe
 app = Flask(__name__)
 
 
-def digits_farsify(digits: str):
-    return digits.replace('0', '۰').replace('1', '۱').replace(
-        '2', '۲').replace('3', '۳').replace('4', '۴').replace('5', '۵').replace(
-        '6', '۶').replace('7', '۷').replace('8', '۸').replace('9', '۹')
-
-
 @app.route('/v1/request_code', methods=['POST'])
 def request_code():
     if not request.is_json:
@@ -49,10 +43,10 @@ def request_code():
         api = KavenegarAPI(KAVENEGAR_APIKEY)
         params = {
             'receptor': j['mobile'],
-            'message': 'سلام. کد فعال‌سازی: '+digits_farsify(code),
+            'message': code,
         }
-        # response = api.sms_send(params)
-        # print(response)
+        response = api.sms_send(params)
+        print(response)
     except APIException as e:
         print(e)
         return jsonify({'message': 'sms_failed'}), 500
@@ -89,7 +83,6 @@ def register_user():
             'mobile': j['mobile'],
             'name': j['name'],
             'remaining_likes': 100,
-            'remaining_posts': 100,
             'is_reviewer': False
         }
     )
@@ -198,7 +191,6 @@ def create_post():
             '_id': ObjectId(user_id)
         },
         projection={
-            'remaining_posts': 1,
             'name': 1
         }
     )
