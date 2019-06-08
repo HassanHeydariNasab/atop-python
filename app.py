@@ -14,6 +14,7 @@ from flask import Flask, request, jsonify
 from bson.objectid import ObjectId
 from pymongo.collection import ReturnDocument
 from local_config import SECRET, KAVENEGAR_APIKEY
+from utils import normalized_mobile
 
 
 client = MongoClient()
@@ -33,6 +34,7 @@ def request_code():
     V = Validator(schema)
     if not V.validate(j):
         return jsonify({'errors': V.errors, 'message': 'invalid format'}), 400
+    j['mobile'] = normalized_mobile(j['mobile'])
     is_user_exists = False
     if db.users.find_one({'mobile': j['mobile']}, projection={'mobile': 1}) != None:
         is_user_exists = True
@@ -73,6 +75,7 @@ def register_user():
     V = Validator(schema)
     if not V.validate(j):
         return jsonify({'errors': V.errors, 'message': 'invalid format'}), 400
+    j['mobile'] = normalized_mobile(j['mobile'])
     if not r_code.is_valid(j['mobile'], j['code']):
         return jsonify({'message': 'invalid mobile or code'}), 401
     if db.users.find_one({'mobile': j['mobile']}, projection={'mobile': 1}) != None:
@@ -101,6 +104,7 @@ def login_user():
     V = Validator(schema)
     if not V.validate(j):
         return jsonify({'errors': V.errors, 'message': 'invalid format'}), 400
+    j['mobile'] = normalized_mobile(j['mobile'])
     if not r_code.is_valid(j['mobile'], j['code']):
         return jsonify({'message': 'invalid mobile or code'}), 401
     user = db.users.find_one(
