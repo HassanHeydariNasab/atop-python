@@ -29,7 +29,7 @@ def request_code():
         return jsonify({'message': 'The request is not JSON!'}), 415
     j = request.get_json()
     schema = {
-        'mobile': {'type': 'string', 'minlength': 10, 'maxlength': 30}
+        'mobile': {'type': 'string', 'minlength': 5, 'maxlength': 30}
     }
     V = Validator(schema)
     if not V.validate(j):
@@ -68,7 +68,7 @@ def register_user():
         return jsonify({'message': 'The request is not JSON!'}), 415
     j = request.get_json()
     schema = {
-        'mobile': {'type': 'string', 'minlength': 10, 'maxlength': 30},
+        'mobile': {'type': 'string', 'minlength': 5, 'maxlength': 30},
         'name': {'type': 'string', 'maxlength': 36, 'minlength': 1},
         'code': {'type': 'string'}
     }
@@ -98,7 +98,7 @@ def login_user():
         return jsonify({'message': 'The request is not JSON!'}), 415
     j = request.get_json()
     schema = {
-        'mobile': {'type': 'string', 'minlength': 10, 'maxlength': 30},
+        'mobile': {'type': 'string', 'minlength': 5, 'maxlength': 30},
         'code': {'type': 'string'}
     }
     V = Validator(schema)
