@@ -28,6 +28,7 @@ def request_code():
     if not request.is_json:
         return jsonify({'message': 'The request is not JSON!'}), 415
     j = request.get_json()
+    print(j)
     schema = {
         'mobile': {'type': 'string', 'minlength': 5, 'maxlength': 30}
     }
