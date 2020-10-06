@@ -13,7 +13,7 @@ from cerberus import Validator
 from flask import Flask, request, jsonify
 from bson.objectid import ObjectId
 from pymongo.collection import ReturnDocument
-from local_config import SECRET, KAVENEGAR_APIKEY
+from local_config import SECRET, KAVENEGAR_APIKEY, KAVENEGAR_VERIFICATION_TEMPLATE
 from utils import normalized_mobile
 
 
@@ -35,7 +35,9 @@ def request_code():
     V = Validator(schema)
     if not V.validate(j):
         return jsonify({'errors': V.errors, 'message': 'invalid format'}), 400
+    print('entered mobile:', j['mobile'])
     j['mobile'] = normalized_mobile(j['mobile'])
+    print('normalized mobile:', j['mobile'])
     is_user_exists = False
     if db.users.find_one({'mobile': j['mobile']}, projection={'mobile': 1}) != None:
         is_user_exists = True
@@ -45,9 +47,10 @@ def request_code():
         api = KavenegarAPI(KAVENEGAR_APIKEY)
         params = {
             'receptor': j['mobile'],
-            'message': code,
+            'token': code,
+            'template': KAVENEGAR_VERIFICATION_TEMPLATE,
         }
-        response = api.sms_send(params)
+        response = api.verify_lookup(params)
         print(response)
     except APIException as e:
         print(e)
